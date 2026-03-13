@@ -36,6 +36,7 @@ See [Brave Search setup](/brave-search) and [Perplexity Search setup](/perplexit
 | **Grok**                  | AI-synthesized answers + citations | —                                            | Uses xAI web-grounded responses                                                | `XAI_API_KEY`                               |
 | **Kimi**                  | AI-synthesized answers + citations | —                                            | Uses Moonshot web search                                                       | `KIMI_API_KEY` / `MOONSHOT_API_KEY`         |
 | **Perplexity Search API** | Structured results with snippets   | `country`, `language`, time, `domain_filter` | Supports content extraction controls; OpenRouter uses Sonar compatibility path | `PERPLEXITY_API_KEY` / `OPENROUTER_API_KEY` |
+| **Z.AI**                  | AI-synthesized answers + citations | —                                            | Uses GLM models with native `$web_search`                                      | `ZAI_API_KEY`                                |
 
 ### Auto-detection
 
@@ -46,6 +47,7 @@ The table above is alphabetical. If no `provider` is explicitly set, runtime aut
 3. **Grok** — `XAI_API_KEY` env var or `tools.web.search.grok.apiKey` config
 4. **Kimi** — `KIMI_API_KEY` / `MOONSHOT_API_KEY` env var or `tools.web.search.kimi.apiKey` config
 5. **Perplexity** — `PERPLEXITY_API_KEY`, `OPENROUTER_API_KEY`, or `tools.web.search.perplexity.apiKey` config
+6. **Z.AI** — `ZAI_API_KEY` env var or `tools.web.search.zai.apiKey` config
 
 If no keys are found, it falls back to Brave (you'll get a missing-key error prompting you to configure one).
 
@@ -90,6 +92,7 @@ See [Perplexity Search API Docs](https://docs.perplexity.ai/guides/search-quicks
 - Grok: `tools.web.search.grok.apiKey`
 - Kimi: `tools.web.search.kimi.apiKey`
 - Perplexity: `tools.web.search.perplexity.apiKey`
+- Z.AI: `tools.web.search.zai.apiKey`
 
 All of these fields also support SecretRef objects.
 
@@ -100,6 +103,7 @@ All of these fields also support SecretRef objects.
 - Grok: `XAI_API_KEY`
 - Kimi: `KIMI_API_KEY` or `MOONSHOT_API_KEY`
 - Perplexity: `PERPLEXITY_API_KEY` or `OPENROUTER_API_KEY`
+- Z.AI: `ZAI_API_KEY`
 
 For a gateway install, put these in `~/.openclaw/.env` (or your service environment). See [Env vars](/help/faq#how-does-openclaw-load-environment-variables).
 
@@ -181,6 +185,35 @@ In this mode, `country` and `language` / `search_lang` still work, but `ui_lang`
   },
 }
 ```
+
+**Z.AI:**
+
+```json5
+{
+  tools: {
+    web: {
+      search: {
+        enabled: true,
+        provider: "zai",
+        zai: {
+          apiKey: "YOUR_ZAI_API_KEY", // optional if ZAI_API_KEY is set
+          model: "glm-4.7",
+          endpoint: "coding-global",
+        },
+      },
+    },
+  },
+}
+```
+
+**Z.AI endpoints:**
+
+- `global` — Standard API (https://api.z.ai/api/paas/v4)
+- `cn` — China API (https://open.bigmodel.cn/api/paas/v4)
+- `coding-global` — Coding API Global (https://api.z.ai/api/coding/paas/v4) — for GLM Coding Lite plans
+- `coding-cn` — Coding API China (https://open.bigmodel.cn/api/coding/paas/v4)
+
+Default: `coding-global` (matches GLM Coding Lite-Monthly Plan)
 
 ## Using Gemini (Google Search grounding)
 

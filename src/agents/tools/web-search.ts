@@ -22,7 +22,7 @@ import {
   writeCache,
 } from "./web-shared.js";
 
-const SEARCH_PROVIDERS = ["brave", "gemini", "grok", "kimi", "perplexity"] as const;
+const SEARCH_PROVIDERS = ["brave", "gemini", "grok", "kimi", "perplexity", "zai"] as const;
 const DEFAULT_SEARCH_COUNT = 5;
 const MAX_SEARCH_COUNT = 10;
 
@@ -42,6 +42,13 @@ const DEFAULT_KIMI_MODEL = "moonshot-v1-128k";
 const KIMI_WEB_SEARCH_TOOL = {
   type: "builtin_function",
   function: { name: "$web_search" },
+} as const;
+
+const DEFAULT_ZAI_BASE_URL = "https://api.z.ai/api/coding/paas/v4";
+const DEFAULT_ZAI_MODEL = "glm-4.7";
+const ZAI_WEB_SEARCH_TOOL = {
+  type: "function",
+  function: { name: "web_search" },
 } as const;
 
 const SEARCH_CACHE = new Map<string, CacheEntry<Record<string, unknown>>>();
@@ -424,6 +431,40 @@ type PerplexitySearchApiResponse = {
   id?: string;
 };
 
+type ZaiConfig = {
+  apiKey?: string;
+  baseUrl?: string;
+  model?: string;
+  endpoint?: "global" | "cn" | "coding-global" | "coding-cn";
+};
+
+type ZaiToolCall = {
+  id?: string;
+  type?: string;
+  function?: {
+    name?: string;
+    arguments?: string;
+  };
+};
+
+type ZaiMessage = {
+  role?: string;
+  content?: string;
+  tool_calls?: ZaiToolCall[];
+};
+
+type ZaiSearchResponse = {
+  choices?: Array<{
+    finish_reason?: string;
+    message?: ZaiMessage;
+  }>;
+  search_results?: Array<{
+    title?: string;
+    url?: string;
+    content?: string;
+  }>;
+};
+
 function extractPerplexityCitations(data: PerplexitySearchResponse): string[] {
   const normalizeUrl = (value: unknown): string | undefined => {
     if (typeof value !== "string") {
@@ -593,6 +634,14 @@ function missingSearchKeyPayload(provider: (typeof SEARCH_PROVIDERS)[number]) {
       docs: "https://docs.openclaw.ai/tools/web",
     };
   }
+  if (provider === "zai") {
+    return {
+      error: "missing_zai_api_key",
+      message:
+        "web_search (zai) needs a Z.AI API key. Set ZAI_API_KEY in the Gateway environment, or configure tools.web.search.zai.apiKey.",
+      docs: "https://docs.openclaw.ai/tools/web",
+    };
+  }
   return {
     error: "missing_perplexity_api_key",
     message:
@@ -663,6 +712,14 @@ function resolveSearchProvider(search?: WebSearchConfig): (typeof SEARCH_PROVIDE
         'web_search: no provider configured, auto-detected "perplexity" from available API keys',
       );
       return "perplexity";
+    }
+    // Z.AI
+    const zaiConfig = resolveZaiConfig(search);
+    if (resolveZaiApiKey(zaiConfig)) {
+      logVerbose(
+        'web_search: no provider configured, auto-detected "zai" from available API keys',
+      );
+      return "zai";
     }
   }
 
@@ -887,6 +944,54 @@ function resolveKimiBaseUrl(kimi?: KimiConfig): string {
   const fromConfig =
     kimi && "baseUrl" in kimi && typeof kimi.baseUrl === "string" ? kimi.baseUrl.trim() : "";
   return fromConfig || DEFAULT_KIMI_BASE_URL;
+}
+
+function resolveZaiConfig(search?: WebSearchConfig): ZaiConfig {
+  if (!search || typeof search !== "object") {
+    return {};
+  }
+  const zai = "zai" in search ? search.zai : undefined;
+  if (!zai || typeof zai !== "object") {
+    return {};
+  }
+  return zai as ZaiConfig;
+}
+
+function resolveZaiApiKey(zai?: ZaiConfig): string | undefined {
+  const fromConfig = normalizeApiKey(zai?.apiKey);
+  if (fromConfig) {
+    return fromConfig;
+  }
+  const fromEnv = normalizeApiKey(process.env.ZAI_API_KEY);
+  return fromEnv || undefined;
+}
+
+function resolveZaiModel(zai?: ZaiConfig): string {
+  const fromConfig =
+    zai && "model" in zai && typeof zai.model === "string" ? zai.model.trim() : "";
+  return fromConfig || DEFAULT_ZAI_MODEL;
+}
+
+function resolveZaiBaseUrl(zai?: ZaiConfig): string {
+  const fromConfig =
+    zai && "baseUrl" in zai && typeof zai.baseUrl === "string" ? zai.baseUrl.trim() : "";
+  if (fromConfig) {
+    return fromConfig;
+  }
+
+  const endpoint = zai?.endpoint || "coding-global";
+  switch (endpoint) {
+    case "global":
+      return "https://api.z.ai/api/paas/v4";
+    case "cn":
+      return "https://open.bigmodel.cn/api/paas/v4";
+    case "coding-global":
+      return "https://api.z.ai/api/coding/paas/v4";
+    case "coding-cn":
+      return "https://open.bigmodel.cn/api/coding/paas/v4";
+    default:
+      return DEFAULT_ZAI_BASE_URL;
+  }
 }
 
 function resolveGeminiConfig(search?: WebSearchConfig): GeminiConfig {
@@ -1510,6 +1615,150 @@ async function runKimiSearch(params: {
   };
 }
 
+function extractZaiMessageText(message: ZaiMessage | undefined): string | undefined {
+  const content = message?.content?.trim();
+  if (content) {
+    return content;
+  }
+  return undefined;
+}
+
+function extractZaiCitations(data: ZaiSearchResponse): string[] {
+  const citations = (data.search_results ?? [])
+    .map((entry) => entry.url?.trim())
+    .filter((url): url is string => Boolean(url));
+
+  for (const toolCall of data.choices?.[0]?.message?.tool_calls ?? []) {
+    const rawArguments = toolCall.function?.arguments;
+    if (!rawArguments) {
+      continue;
+    }
+    try {
+      const parsed = JSON.parse(rawArguments) as {
+        search_results?: Array<{ url?: string }>;
+        url?: string;
+      };
+      if (typeof parsed.url === "string" && parsed.url.trim()) {
+        citations.push(parsed.url.trim());
+      }
+      for (const result of parsed.search_results ?? []) {
+        if (typeof result.url === "string" && result.url.trim()) {
+          citations.push(result.url.trim());
+        }
+      }
+    } catch {
+    }
+  }
+
+  return [...new Set(citations)];
+}
+
+function buildZaiToolResultContent(data: ZaiSearchResponse): string {
+  return JSON.stringify({
+    search_results: (data.search_results ?? []).map((entry) => ({
+      title: entry.title ?? "",
+      url: entry.url ?? "",
+      content: entry.content ?? "",
+    })),
+  });
+}
+
+async function runZaiSearch(params: {
+  query: string;
+  apiKey: string;
+  baseUrl: string;
+  model: string;
+  timeoutSeconds: number;
+}): Promise<{ content: string; citations: string[] }> {
+  const baseUrl = params.baseUrl.trim().replace(/\/$/, "");
+  const endpoint = `${baseUrl}/chat/completions`;
+  const messages: Array<Record<string, unknown>> = [
+    {
+      role: "user",
+      content: params.query,
+    },
+  ];
+  const collectedCitations = new Set<string>();
+  const MAX_ROUNDS = 3;
+
+  for (let round = 0; round < MAX_ROUNDS; round += 1) {
+    const nextResult = await withTrustedWebSearchEndpoint(
+      {
+        url: endpoint,
+        timeoutSeconds: params.timeoutSeconds,
+        init: {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${params.apiKey}`,
+          },
+          body: JSON.stringify({
+            model: params.model,
+            messages,
+            tools: [ZAI_WEB_SEARCH_TOOL],
+          }),
+        },
+      },
+      async (
+        res,
+      ): Promise<{ done: true; content: string; citations: string[] } | { done: false }> => {
+        if (!res.ok) {
+          return await throwWebSearchApiError(res, "Z.AI");
+        }
+
+        const data = (await res.json()) as ZaiSearchResponse;
+        for (const citation of extractZaiCitations(data)) {
+          collectedCitations.add(citation);
+        }
+        const choice = data.choices?.[0];
+        const message = choice?.message;
+        const text = extractZaiMessageText(message);
+        const toolCalls = message?.tool_calls ?? [];
+
+        if (choice?.finish_reason !== "tool_calls" || toolCalls.length === 0) {
+          return { done: true, content: text ?? "No response", citations: [...collectedCitations] };
+        }
+
+        messages.push({
+          role: "assistant",
+          content: message?.content ?? "",
+          tool_calls: toolCalls,
+        });
+
+        const toolContent = buildZaiToolResultContent(data);
+        let pushedToolResult = false;
+        for (const toolCall of toolCalls) {
+          const toolCallId = toolCall.id?.trim();
+          if (!toolCallId) {
+            continue;
+          }
+          pushedToolResult = true;
+          messages.push({
+            role: "tool",
+            tool_call_id: toolCallId,
+            content: toolContent,
+          });
+        }
+
+        if (!pushedToolResult) {
+          return { done: true, content: text ?? "No response", citations: [...collectedCitations] };
+        }
+
+        return { done: false };
+      },
+    );
+
+    if (nextResult.done) {
+      return { content: nextResult.content, citations: nextResult.citations };
+    }
+  }
+
+  return {
+    content: "Search completed but no final answer was produced.",
+    citations: [...collectedCitations],
+  };
+}
+
 function mapBraveLlmContextResults(
   data: BraveLlmContextResponse,
 ): { url: string; title: string; snippets: string[]; siteName?: string }[] {
@@ -1602,6 +1851,8 @@ async function runWebSearch(params: {
   geminiModel?: string;
   kimiBaseUrl?: string;
   kimiModel?: string;
+  zaiBaseUrl?: string;
+  zaiModel?: string;
   braveMode?: "web" | "llm-context";
 }): Promise<Record<string, unknown>> {
   const effectiveBraveMode = params.braveMode ?? "web";
@@ -1614,7 +1865,9 @@ async function runWebSearch(params: {
           ? (params.geminiModel ?? DEFAULT_GEMINI_MODEL)
           : params.provider === "kimi"
             ? `${params.kimiBaseUrl ?? DEFAULT_KIMI_BASE_URL}:${params.kimiModel ?? DEFAULT_KIMI_MODEL}`
-            : "";
+            : params.provider === "zai"
+              ? `${params.zaiBaseUrl ?? DEFAULT_ZAI_BASE_URL}:${params.zaiModel ?? DEFAULT_ZAI_MODEL}`
+              : "";
   const cacheKey = normalizeCacheKey(
     params.provider === "brave" && effectiveBraveMode === "llm-context"
       ? `${params.provider}:llm-context:${params.query}:${params.country || "default"}:${params.search_lang || params.language || "default"}:${params.freshness || "default"}`
@@ -1764,6 +2017,33 @@ async function runWebSearch(params: {
       },
       content: wrapWebContent(geminiResult.content),
       citations: geminiResult.citations,
+    };
+    writeCache(SEARCH_CACHE, cacheKey, payload, params.cacheTtlMs);
+    return payload;
+  }
+
+  if (params.provider === "zai") {
+    const { content, citations } = await runZaiSearch({
+      query: params.query,
+      apiKey: params.apiKey,
+      baseUrl: params.zaiBaseUrl ?? DEFAULT_ZAI_BASE_URL,
+      model: params.zaiModel ?? DEFAULT_ZAI_MODEL,
+      timeoutSeconds: params.timeoutSeconds,
+    });
+
+    const payload = {
+      query: params.query,
+      provider: params.provider,
+      model: params.zaiModel ?? DEFAULT_ZAI_MODEL,
+      tookMs: Date.now() - start,
+      externalContent: {
+        untrusted: true,
+        source: "web_search",
+        provider: params.provider,
+        wrapped: true,
+      },
+      content: wrapWebContent(content),
+      citations,
     };
     writeCache(SEARCH_CACHE, cacheKey, payload, params.cacheTtlMs);
     return payload;
@@ -1921,9 +2201,11 @@ export function createWebSearchTool(options?: {
         ? "Search the web using xAI Grok. Returns AI-synthesized answers with citations from real-time web search."
         : provider === "kimi"
           ? "Search the web using Kimi by Moonshot. Returns AI-synthesized answers with citations from native $web_search."
-          : provider === "gemini"
-            ? "Search the web using Gemini with Google Search grounding. Returns AI-synthesized answers with citations from Google Search."
-            : braveMode === "llm-context"
+      : provider === "gemini"
+        ? "Search the web using Gemini with Google Search grounding. Returns AI-synthesized answers with citations from Google Search."
+        : provider === "zai"
+          ? "Search the web using Z.AI (GLM models) via coding or standard endpoint. Returns AI-synthesized answers with citations from native web_search."
+          : braveMode === "llm-context"
               ? "Search the web using Brave Search LLM Context API. Returns pre-extracted page content (text chunks, tables, code blocks) optimized for LLM grounding."
               : "Search the web using Brave Search API. Supports region-specific and localized search via country and language parameters. Returns titles, URLs, and snippets for fast research.";
 
@@ -1947,9 +2229,11 @@ export function createWebSearchTool(options?: {
             ? resolveGrokApiKey(grokConfig)
             : provider === "kimi"
               ? resolveKimiApiKey(kimiConfig)
-              : provider === "gemini"
-                ? resolveGeminiApiKey(geminiConfig)
-                : resolveSearchApiKey(search);
+              : provider === "zai"
+                ? resolveZaiApiKey(zaiConfig)
+                : provider === "gemini"
+                  ? resolveGeminiApiKey(geminiConfig)
+                  : resolveSearchApiKey(search);
 
       if (!apiKey) {
         return jsonResult(missingSearchKeyPayload(provider));
@@ -2185,6 +2469,8 @@ export function createWebSearchTool(options?: {
         geminiModel: resolveGeminiModel(geminiConfig),
         kimiBaseUrl: resolveKimiBaseUrl(kimiConfig),
         kimiModel: resolveKimiModel(kimiConfig),
+        zaiBaseUrl: resolveZaiBaseUrl(zaiConfig),
+        zaiModel: resolveZaiModel(zaiConfig),
         braveMode,
       });
       return jsonResult(result);
@@ -2219,4 +2505,8 @@ export const __testing = {
   resolveRedirectUrl: resolveCitationRedirectUrl,
   resolveBraveMode,
   mapBraveLlmContextResults,
+  resolveZaiApiKey,
+  resolveZaiModel,
+  resolveZaiBaseUrl,
+  extractZaiCitations,
 } as const;

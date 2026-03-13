@@ -226,6 +226,10 @@ export const FIELD_LABELS: Record<string, string> = {
   "tools.web.search.kimi.apiKey": "Kimi Search API Key", // pragma: allowlist secret
   "tools.web.search.kimi.baseUrl": "Kimi Search Base URL",
   "tools.web.search.kimi.model": "Kimi Search Model",
+  "tools.web.search.zai.apiKey": "Z.AI API Key", // pragma: allowlist secret
+  "tools.web.search.zai.baseUrl": "Z.AI Base URL",
+  "tools.web.search.zai.model": "Z.AI Model",
+  "tools.web.search.zai.endpoint": "Z.AI Endpoint (global, cn, coding-global, coding-cn)",
   "tools.web.search.perplexity.apiKey": "Perplexity API Key", // pragma: allowlist secret
   "tools.web.search.perplexity.baseUrl": "Perplexity Base URL",
   "tools.web.search.perplexity.model": "Perplexity Model",
