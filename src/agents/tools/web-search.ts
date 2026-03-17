@@ -704,6 +704,12 @@ function resolveSearchProvider(search?: WebSearchConfig): (typeof SEARCH_PROVIDE
       );
       return "kimi";
     }
+    // Z.AI
+    const zaiConfig = resolveZaiConfig(search);
+    if (resolveZaiApiKey(zaiConfig)) {
+      logVerbose('web_search: no provider configured, auto-detected "zai" from available API keys');
+      return "zai";
+    }
     // Perplexity
     const perplexityConfig = resolvePerplexityConfig(search);
     const { apiKey: perplexityKey } = resolvePerplexityApiKey(perplexityConfig);
@@ -712,14 +718,6 @@ function resolveSearchProvider(search?: WebSearchConfig): (typeof SEARCH_PROVIDE
         'web_search: no provider configured, auto-detected "perplexity" from available API keys',
       );
       return "perplexity";
-    }
-    // Z.AI
-    const zaiConfig = resolveZaiConfig(search);
-    if (resolveZaiApiKey(zaiConfig)) {
-      logVerbose(
-        'web_search: no provider configured, auto-detected "zai" from available API keys',
-      );
-      return "zai";
     }
   }
 
@@ -967,8 +965,7 @@ function resolveZaiApiKey(zai?: ZaiConfig): string | undefined {
 }
 
 function resolveZaiModel(zai?: ZaiConfig): string {
-  const fromConfig =
-    zai && "model" in zai && typeof zai.model === "string" ? zai.model.trim() : "";
+  const fromConfig = zai && "model" in zai && typeof zai.model === "string" ? zai.model.trim() : "";
   return fromConfig || DEFAULT_ZAI_MODEL;
 }
 
@@ -1646,8 +1643,7 @@ function extractZaiCitations(data: ZaiSearchResponse): string[] {
           citations.push(result.url.trim());
         }
       }
-    } catch {
-    }
+    } catch {}
   }
 
   return [...new Set(citations)];
@@ -2201,13 +2197,13 @@ export function createWebSearchTool(options?: {
         ? "Search the web using xAI Grok. Returns AI-synthesized answers with citations from real-time web search."
         : provider === "kimi"
           ? "Search the web using Kimi by Moonshot. Returns AI-synthesized answers with citations from native $web_search."
-      : provider === "gemini"
-        ? "Search the web using Gemini with Google Search grounding. Returns AI-synthesized answers with citations from Google Search."
-        : provider === "zai"
-          ? "Search the web using Z.AI (GLM models) via coding or standard endpoint. Returns AI-synthesized answers with citations from native web_search."
-          : braveMode === "llm-context"
-              ? "Search the web using Brave Search LLM Context API. Returns pre-extracted page content (text chunks, tables, code blocks) optimized for LLM grounding."
-              : "Search the web using Brave Search API. Supports region-specific and localized search via country and language parameters. Returns titles, URLs, and snippets for fast research.";
+          : provider === "gemini"
+            ? "Search the web using Gemini with Google Search grounding. Returns AI-synthesized answers with citations from Google Search."
+            : provider === "zai"
+              ? "Search the web using Z.AI (GLM models) via coding or standard endpoint. Returns AI-synthesized answers with citations from native web_search."
+              : braveMode === "llm-context"
+                ? "Search the web using Brave Search LLM Context API. Returns pre-extracted page content (text chunks, tables, code blocks) optimized for LLM grounding."
+                : "Search the web using Brave Search API. Supports region-specific and localized search via country and language parameters. Returns titles, URLs, and snippets for fast research.";
 
   return {
     label: "Web Search",
