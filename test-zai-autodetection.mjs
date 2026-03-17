@@ -43,7 +43,7 @@ async function testZaiAutoDetection() {
   console.log();
 
   // Тест 4: zai должен выигрывать когда только zai и perplexity доступены
-  console.log("Тест 4: Z.AI против Perplexity (алфавитный порядок: perplexity > zai)");
+  console.log("Тест 4: Z.AI против Perplexity (алфавитный порядок: zai > perplexity)");
   delete process.env.BRAVE_API_KEY;
   delete process.env.GEMINI_API_KEY;
   delete process.env.XAI_API_KEY;
@@ -53,7 +53,7 @@ async function testZaiAutoDetection() {
   process.env.PERPLEXITY_API_KEY = "test-perplexity-key";
   const provider4 = resolveSearchProvider({});
   console.log("   Результат:", provider4);
-  console.log(provider4 === "perplexity" ? "   ✅ PASS" : "   ❌ FAIL");
+  console.log(provider4 === "zai" ? "   ✅ PASS" : "   ❌ FAIL");
   console.log();
 
   // Тест 5: Явный provider всегда побеждает
